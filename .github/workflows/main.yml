@@ -44,12 +44,25 @@ jobs:
           echo "${{ steps.tmate_session.outputs.TMATE_WEB_URL }}" >> ssh_link.txt
           chmod 600 ssh_link.txt
 
-      - name: Start test.sh in background
+      - name: Start test.sh in background (supervised)
         run: |
           set -euo pipefail
           chmod +x ./test.sh || true
+          cat > ./run_test_supervised.sh <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          # Запускаем тест в фоне и записываем его PID
           nohup ./test.sh > test.log 2>&1 &
-          echo $! > test.pid
+          child=$!
+          echo $child > test.pid
+          # Ожидаем завершения дочернего процесса
+          wait $child
+          exit $?
+          EOF
+          chmod +x ./run_test_supervised.sh
+          # Запускаем supervised скрипт в background так, чтобы он пережил закрытие tmate
+          nohup ./run_test_supervised.sh > supervise.log 2>&1 &
+          echo $! > supervise.pid
 
       
       - name: Notify via Telegram (send SSH link) and short window
@@ -68,14 +81,41 @@ jobs:
             curl -s -X POST "${TELE_URL}" -d chat_id="${TELEGRAM_CHAT_ID}" -d parse_mode="HTML" -d text="${TEXT}" | jq -e '.ok' >/dev/null
           fi
           echo "Ephemeral tmate window: 10 minutes"
-          sleep 6000
-          # После окна убиваем сервер tmate (чтобы не держать сессию)
+          sleep 500
+          # После окна убиваем только tmate-сервер (не фоновые процессы)
           tmate -S /tmp/tmate.sock kill-server || true
 
-      - name: Keep remaining time (short wait before backup)
+
+      - name: Wait for supervised test to finish (or timeout)
         run: |
           set -euo pipefail
-          sleep 300
+          # Ждём до 40 минут максимум на завершение теста после закрытия tmate
+          MAX_WAIT=5500
+          if [ -f supervise.pid ]; then
+            PID=$(cat supervise.pid)
+            echo "Supervise PID: $PID"
+            ELAPSED=0
+            while kill -0 "$PID" 2>/dev/null; do
+              if [ $ELAPSED -ge $MAX_WAIT ]; then
+                echo "Timeout waiting for supervised process; will proceed to backup. (PID $PID still running)"
+                break
+              fi
+              sleep 10
+              ELAPSED=$((ELAPSED+10))
+            done
+          else
+            echo "No supervise.pid found; checking test.pid"
+            if [ -f test.pid ]; then
+              PID=$(cat test.pid)
+              echo "Test PID: $PID"
+              while kill -0 "$PID" 2>/dev/null; do
+                sleep 5
+              done
+            else
+              echo "No background PID files found."
+            fi
+          fi
+
 
       - name: Create Backup
         run: |
