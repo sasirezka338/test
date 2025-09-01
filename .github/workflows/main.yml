@@ -8,8 +8,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    # Общий таймаут job — 50 минут
-    timeout-minutes: 50
+    timeout-minutes: 150
 
     steps:
       - name: Checkout Code
@@ -21,11 +20,7 @@ jobs:
         id: restore
         run: |
           set -euo pipefail
-          # Попробуем загрузить последний артефакт (если он существует) через GitHub API
-          # Если артефакт недоступен — продолжаем с чистой рабочей директорией
           echo "No automatic restore implemented — ensure relevant files are in the repo or provide manual restore steps."
-          # При необходимости можно добавить скачивание артефакта через actions/download-artifact,
-          # но workflow run-to-run артефакты недоступны напрямую без конкретной реализации.
 
       - name: Setup and Run tmate (ephemeral)
         id: tmate_session
@@ -33,12 +28,10 @@ jobs:
           set -euo pipefail
           sudo apt-get update -y
           sudo apt-get install -y tmate jq
-          # Запускаем tmate в фоне
           tmate -S /tmp/tmate.sock new-session -d
           tmate -S /tmp/tmate.sock wait tmate-ready
           TMATE_SSH=$(tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}')
           TMATE_WEB=$(tmate -S /tmp/tmate.sock display -p '#{tmate_web}')
-          # Маскируем в логах
           echo "::add-mask::${TMATE_SSH}"
           echo "::add-mask::${TMATE_WEB}"
           echo "TMATE_SSH_URL=${TMATE_SSH}" >> $GITHUB_OUTPUT
@@ -66,17 +59,14 @@ jobs:
             TELE_URL="https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage"
             curl -s -X POST "${TELE_URL}" -d chat_id="${TELEGRAM_CHAT_ID}" -d parse_mode="HTML" -d text="${TEXT}" | jq -e '.ok' >/dev/null
           fi
-          # Окно для подключения — 10 минут (600s)
           echo "Ephemeral tmate window: 10 minutes"
-          sleep 600
+          sleep 6000
           # После окна убиваем сервер tmate (чтобы не держать сессию)
           tmate -S /tmp/tmate.sock kill-server || true
 
       - name: Keep remaining time (short wait before backup)
         run: |
           set -euo pipefail
-          # Учитываем, что job лимит 50 минут. Выделяем время на бэкап/загрузку/триггер.
-          # После 10 минут работы tmate остаётся примерно ~40 минут. Делаем небольшой буфер: ждем 5 минут.
           sleep 300
 
       - name: Create Backup
