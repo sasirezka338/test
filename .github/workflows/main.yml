@@ -122,45 +122,22 @@ jobs:
           set -euo pipefail
           echo "Creating data backup..."
           # Исключаем .git и артефакты, а также временный файл с ссылкой
-          zip -r vds_backup.zip . -x ".git/*" "ssh_link.txt" "test.log"
+          zip -r vds_backup.zip . -x ".git/*" "vds_backup.zip" "ssh_link.txt" "test.log"
 
-      - name: Upload Backup Artifact
-        uses: actions/upload-artifact@v4
+      - name: Commit Backup and SSH Link
+        uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          name: vds-backup
-          path: vds_backup.zip
+          commit_message: "test update"
+          # Указываем, какие файлы коммитить
+          file_pattern: "test_update.zip"
 
-      - name: Trigger Next VDS Run with backoff
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Trigger Next Run
         run: |
-          set -euo pipefail
-          # Простая логика retry с экспоненциальным backoff (3 попытки)
-          REPO="${{ github.repository }}"
-          PAYLOAD='{"event_type":"restart-vds"}'
-          ATTEMPT=0
-          MAX=3
-          DELAY=5
-          SUCCESS=0
-          while [ $ATTEMPT -lt $MAX ]; do
-            ATTEMPT=$((ATTEMPT+1))
-            echo "Trigger attempt #${ATTEMPT}"
-            HTTP=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
-              -H "Accept: application/vnd.github.v3+json" \
-              -H "Authorization: token ${GITHUB_TOKEN}" \
-              "https://api.github.com/repos/${REPO}/dispatches" \
-              -d "${PAYLOAD}")
-            if [ "$HTTP" = "204" ] || [ "$HTTP" = "200" ]; then
-              echo "Dispatch accepted (HTTP $HTTP)"
-              SUCCESS=1
-              break
-            else
-              echo "Dispatch failed (HTTP $HTTP), sleeping ${DELAY}s"
-              sleep $DELAY
-              DELAY=$((DELAY*2))
-            fi
-          done
-          if [ $SUCCESS -ne 1 ]; then
-            echo "Failed to trigger next run after ${MAX} attempts" >&2
-            exit 0
-          fi
+          echo "Triggering VDS restart..."
+          # Отправляем запрос к API GitHub, чтобы запустить этот же воркфлоу снова
+          curl -L \
+            -X POST \
+            -H "Accept: application/vnd.github.v3+json" \
+            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/dispatches" \
+            -d '{"event_type": "restart-vds"}'
