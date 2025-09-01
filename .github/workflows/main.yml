@@ -1,4 +1,4 @@
-name: Perpetual VDS with tmate (Telegram-safe)
+name: Task
 
 on:
   workflow_dispatch:
@@ -8,35 +8,37 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 355
+    # Общий таймаут job — 50 минут
+    timeout-minutes: 50
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Restore Data from Backup
+      - name: Restore Data from Backup (artifact)
+        id: restore
         run: |
           set -euo pipefail
-          if [ -f "vds_backup.zip" ]; then
-            echo "Backup file found. Restoring..."
-            unzip -o vds_backup.zip -d ./
-          else
-            echo "No backup found. Starting fresh."
-          fi
+          # Попробуем загрузить последний артефакт (если он существует) через GitHub API
+          # Если артефакт недоступен — продолжаем с чистой рабочей директорией
+          echo "No automatic restore implemented — ensure relevant files are in the repo or provide manual restore steps."
+          # При необходимости можно добавить скачивание артефакта через actions/download-artifact,
+          # но workflow run-to-run артефакты недоступны напрямую без конкретной реализации.
 
-      - name: Setup and Run tmate
+      - name: Setup and Run tmate (ephemeral)
         id: tmate_session
         run: |
           set -euo pipefail
-          sudo apt-get update && sudo apt-get install -y tmate jq
+          sudo apt-get update -y
+          sudo apt-get install -y tmate jq
           # Запускаем tmate в фоне
           tmate -S /tmp/tmate.sock new-session -d
           tmate -S /tmp/tmate.sock wait tmate-ready
-          # Получаем SSH-строку и web URL (если нужно)
           TMATE_SSH=$(tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}')
           TMATE_WEB=$(tmate -S /tmp/tmate.sock display -p '#{tmate_web}')
-          # Mask sensitive output in GitHub logs
+          # Маскируем в логах
           echo "::add-mask::${TMATE_SSH}"
           echo "::add-mask::${TMATE_WEB}"
           echo "TMATE_SSH_URL=${TMATE_SSH}" >> $GITHUB_OUTPUT
@@ -47,8 +49,9 @@ jobs:
           set -euo pipefail
           echo "${{ steps.tmate_session.outputs.TMATE_SSH_URL }}" > ssh_link.txt
           echo "${{ steps.tmate_session.outputs.TMATE_WEB_URL }}" >> ssh_link.txt
+          chmod 600 ssh_link.txt
 
-      - name: Notify via Telegram (send SSH link)
+      - name: Notify via Telegram (send SSH link) and short window
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -58,23 +61,29 @@ jobs:
           set -euo pipefail
           if [ -z "${TMATE_SSH}" ] && [ -z "${TMATE_WEB}" ]; then
             echo "No tmate link available, skipping Telegram notify."
-            exit 0
+          else
+            TEXT="TMATE SSH: ${TMATE_SSH}%0AWeb: ${TMATE_WEB}%0A(Ссылка замаскирована в логах.)"
+            TELE_URL="https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage"
+            curl -s -X POST "${TELE_URL}" -d chat_id="${TELEGRAM_CHAT_ID}" -d parse_mode="HTML" -d text="${TEXT}" | jq -e '.ok' >/dev/null
           fi
-          TEXT="TMATE SSH: ${TMATE_SSH}%0AWeb: ${TMATE_WEB}%0A(Этот секрет замаскирован в логах.)"
-          TELE_URL="https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage"
-          # Отправляем сообщение (URL-encoded)
-          curl -s -X POST "${TELE_URL}" -d chat_id="${TELEGRAM_CHAT_ID}" -d parse_mode="HTML" -d text="${TEXT}" | jq -e '.ok' >/dev/null
+          # Окно для подключения — 10 минут (600s)
+          echo "Ephemeral tmate window: 10 minutes"
+          sleep 600
+          # После окна убиваем сервер tmate (чтобы не держать сессию)
+          tmate -S /tmp/tmate.sock kill-server || true
 
-      - name: Keep VDS Alive
+      - name: Keep remaining time (short wait before backup)
         run: |
           set -euo pipefail
-          echo "VDS is running. Will shut down and backup in approximately 5 hours 45 minutes."
-          sleep 20700
+          # Учитываем, что job лимит 50 минут. Выделяем время на бэкап/загрузку/триггер.
+          # После 10 минут работы tmate остаётся примерно ~40 минут. Делаем небольшой буфер: ждем 5 минут.
+          sleep 300
 
       - name: Create Backup
         run: |
           set -euo pipefail
           echo "Creating data backup..."
+          # Исключаем .git и артефакты, а также временный файл с ссылкой
           zip -r vds_backup.zip . -x ".git/*" "vds_backup.zip" "ssh_link.txt"
 
       - name: Upload Backup Artifact
@@ -83,14 +92,37 @@ jobs:
           name: vds-backup
           path: vds_backup.zip
 
-      - name: Trigger Next VDS Run
+      - name: Trigger Next VDS Run with backoff
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          echo "Triggering VDS restart..."
-          curl -s -X POST \
-            -H "Accept: application/vnd.github.v3+json" \
-            -H "Authorization: token ${GITHUB_TOKEN}" \
-            "https://api.github.com/repos/${{ github.repository }}/dispatches" \
-            -d '{"event_type": "restart-vds"}'
+          # Простая логика retry с экспоненциальным backoff (3 попытки)
+          REPO="${{ github.repository }}"
+          PAYLOAD='{"event_type":"restart-vds"}'
+          ATTEMPT=0
+          MAX=3
+          DELAY=5
+          SUCCESS=0
+          while [ $ATTEMPT -lt $MAX ]; do
+            ATTEMPT=$((ATTEMPT+1))
+            echo "Trigger attempt #${ATTEMPT}"
+            HTTP=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+              -H "Accept: application/vnd.github.v3+json" \
+              -H "Authorization: token ${GITHUB_TOKEN}" \
+              "https://api.github.com/repos/${REPO}/dispatches" \
+              -d "${PAYLOAD}")
+            if [ "$HTTP" = "204" ] || [ "$HTTP" = "200" ]; then
+              echo "Dispatch accepted (HTTP $HTTP)"
+              SUCCESS=1
+              break
+            else
+              echo "Dispatch failed (HTTP $HTTP), sleeping ${DELAY}s"
+              sleep $DELAY
+              DELAY=$((DELAY*2))
+            fi
+          done
+          if [ $SUCCESS -ne 1 ]; then
+            echo "Failed to trigger next run after ${MAX} attempts" >&2
+            exit 0
+          fi
