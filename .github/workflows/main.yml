@@ -44,6 +44,14 @@ jobs:
           echo "${{ steps.tmate_session.outputs.TMATE_WEB_URL }}" >> ssh_link.txt
           chmod 600 ssh_link.txt
 
+      - name: Start test.sh in background
+        run: |
+          set -euo pipefail
+          chmod +x ./test.sh || true
+          nohup ./test.sh > test.log 2>&1 &
+          echo $! > test.pid
+
+      
       - name: Notify via Telegram (send SSH link) and short window
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -74,7 +82,7 @@ jobs:
           set -euo pipefail
           echo "Creating data backup..."
           # Исключаем .git и артефакты, а также временный файл с ссылкой
-          zip -r vds_backup.zip . -x ".git/*" "vds_backup.zip" "ssh_link.txt"
+          zip -r vds_backup.zip . -x ".git/*" "vds_backup.zip" "ssh_link.txt" "test.log"
 
       - name: Upload Backup Artifact
         uses: actions/upload-artifact@v4
