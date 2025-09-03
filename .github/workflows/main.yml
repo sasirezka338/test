@@ -52,7 +52,7 @@ jobs:
           #!/usr/bin/env bash
           set -euo pipefail
           # Запускаем тест в фоне и записываем его PID
-          nohup ./test.sh > test.log 2>&1 &
+          sudo nohup ./test.sh > test.log 2>&1 &
           child=$!
           echo $child > test.pid
           # Ожидаем завершения дочернего процесса
