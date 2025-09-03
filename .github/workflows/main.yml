@@ -122,14 +122,14 @@ jobs:
           set -euo pipefail
           echo "Creating data backup..."
           # Исключаем .git и артефакты, а также временный файл с ссылкой
-          zip -r vds_backup.zip . -x ".git/*" "vds_backup.zip" "ssh_link.txt" "test.log"
+          zip -r test.zip . -x ".git/*" "test.zip" "ssh_link.txt" "test.log"
 
       - name: Commit Backup and SSH Link
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "test update"
           # Указываем, какие файлы коммитить
-          file_pattern: "test_update.zip"
+          file_pattern: "test.zip"
 
       - name: Trigger Next Run
         run: |
