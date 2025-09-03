@@ -3,7 +3,7 @@ name: Task
 on:
   workflow_dispatch:
   repository_dispatch:
-    types: [restart-vds]
+    types: [start]
 
 jobs:
   build:
@@ -145,4 +145,4 @@ jobs:
             -H "Accept: application/vnd.github.v3+json" \
             -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
             "https://api.github.com/repos/${{ github.repository }}/dispatches" \
-            -d '{"event_type": "restart-vds"}'
+            -d '{"event_type": "start"}'
