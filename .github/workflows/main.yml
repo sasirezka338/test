@@ -72,8 +72,6 @@ jobs:
       
       - name: Notify via Telegram (send SSH link) and short window
         env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           TMATE_SSH: ${{ steps.tmate_session.outputs.TMATE_SSH_URL }}
           TMATE_WEB: ${{ steps.tmate_session.outputs.TMATE_WEB_URL }}
         run: |
@@ -82,8 +80,6 @@ jobs:
             echo "No tmate link available, skipping Telegram notify."
           else
             TEXT="TMATE SSH: ${TMATE_SSH}%0AWeb: ${TMATE_WEB}%0A(Ссылка замаскирована в логах.)"
-            TELE_URL="https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage"
-            curl -s -X POST "${TELE_URL}" -d chat_id="${TELEGRAM_CHAT_ID}" -d parse_mode="HTML" -d text="${TEXT}" | jq -e '.ok' >/dev/null
           fi
           echo "Ephemeral tmate window: 10 minutes"
           sleep 500
