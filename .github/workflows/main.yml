@@ -16,11 +16,16 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Restore Data from Backup (artifact)
-        id: restore
+# Шаг 2: Восстанавливаем данные из бэкапа, если он существует
+      - name: Restore
         run: |
-          set -euo pipefail
-          echo "No automatic restore implemented — ensure relevant files are in the repo or provide manual restore steps."
+          if [ -f "test.zip" ]; then
+            echo "file found. Restoring..."
+            # Распаковываем архив с заменой существующих файлов
+            unzip -o test.zip -d ./
+          else
+            echo "No backup found. Starting fresh."
+          fi
 
       - name: Setup and Run tmate (ephemeral)
         id: tmate_session
