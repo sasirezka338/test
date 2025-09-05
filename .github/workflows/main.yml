@@ -71,7 +71,7 @@ jobs:
         timeout-minutes: 100
         run: |
           set -euo pipefail
-          sudo nohup ./test.sh > test.log 2>&1 &
+          sudo sh test.sh
 
 
 
